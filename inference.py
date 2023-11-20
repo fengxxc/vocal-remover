@@ -15,13 +15,14 @@ from lib import utils
 
 class Separator(object):
 
-    def __init__(self, model, device, batchsize, cropsize, postprocess=False):
+    def __init__(self, model, device, batchsize, cropsize, postprocess=False, stepCallback=None):
         self.model = model
         self.offset = model.offset
         self.device = device
         self.batchsize = batchsize
         self.cropsize = cropsize
         self.postprocess = postprocess
+        self.stepCallback = stepCallback
 
     def _separate(self, X_mag_pad, roi_size):
         X_dataset = []
@@ -38,6 +39,8 @@ class Separator(object):
             mask = []
             # To reduce the overhead, dataloader is not used.
             for i in tqdm(range(0, patches, self.batchsize)):
+                if self.stepCallback != None:
+                    self.stepCallback(f"{i/patches:.2%}")
                 X_batch = X_dataset[i: i + self.batchsize]
                 X_batch = torch.from_numpy(X_batch).to(self.device)
 
@@ -104,6 +107,64 @@ class Separator(object):
 
         return y_spec, v_spec
 
+def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, sr=44100, n_fft=2048, hop_length=1024, batchsize=4, cropsize=256, output_image=False, postprocess=False, tta=False, output_dir="", stepCallback=None):
+    print('loading model...', end=' ')
+    device = torch.device('cpu')
+    model = nets.CascadedNet(n_fft, 32, 128)
+    model.load_state_dict(torch.load(pretrained_model, map_location=device))
+    if gpu >= 0:
+        if torch.cuda.is_available():
+            device = torch.device('cuda:{}'.format(gpu))
+            model.to(device)
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            device = torch.device('mps')
+            model.to(device)
+    print('done')
+
+    print('loading wave source...', end=' ')
+    X, sr = librosa.load(
+        input, sr = sr, mono=False, dtype=np.float32, res_type='kaiser_fast')
+    basename = os.path.splitext(os.path.basename(input))[0]
+    print('done')
+
+    if X.ndim == 1:
+        # mono to stereo
+        X = np.asarray([X, X])
+
+    print('stft of wave source...', end=' ')
+    X_spec = spec_utils.wave_to_spectrogram(X, hop_length, n_fft)
+    print('done')
+
+    sp = Separator(model, device, batchsize, cropsize, postprocess, stepCallback=stepCallback)
+
+    if tta:
+        y_spec, v_spec = sp.separate_tta(X_spec)
+    else:
+        y_spec, v_spec = sp.separate(X_spec)
+
+    print('validating output directory...', end=' ')
+    output_dir = output_dir
+    if output_dir != "":  # modifies output_dir if theres an arg specified
+        output_dir = output_dir.rstrip('/') + '/'
+        os.makedirs(output_dir, exist_ok=True)
+    print('done')
+
+    print('inverse stft of instruments...', end=' ')
+    wave = spec_utils.spectrogram_to_wave(y_spec, hop_length=hop_length)
+    print('done')
+    sf.write('{}{}_Instruments.wav'.format(output_dir, basename), wave.T, sr)
+
+    print('inverse stft of vocals...', end=' ')
+    wave = spec_utils.spectrogram_to_wave(v_spec, hop_length=hop_length)
+    print('done')
+    sf.write('{}{}_Vocals.wav'.format(output_dir, basename), wave.T, sr)
+
+    if output_image:
+        image = spec_utils.spectrogram_to_image(y_spec)
+        utils.imwrite('{}{}_Instruments.jpg'.format(output_dir, basename), image)
+
+        image = spec_utils.spectrogram_to_image(v_spec)
+        utils.imwrite('{}{}_Vocals.jpg'.format(output_dir, basename), image)
 
 def main():
     p = argparse.ArgumentParser()
@@ -121,63 +182,21 @@ def main():
     p.add_argument('--output_dir', '-o', type=str, default="")
     args = p.parse_args()
 
-    print('loading model...', end=' ')
-    device = torch.device('cpu')
-    model = nets.CascadedNet(args.n_fft, 32, 128)
-    model.load_state_dict(torch.load(args.pretrained_model, map_location=device))
-    if args.gpu >= 0:
-        if torch.cuda.is_available():
-            device = torch.device('cuda:{}'.format(args.gpu))
-            model.to(device)
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            device = torch.device('mps')
-            model.to(device)
-    print('done')
-
-    print('loading wave source...', end=' ')
-    X, sr = librosa.load(
-        args.input, sr=args.sr, mono=False, dtype=np.float32, res_type='kaiser_fast')
-    basename = os.path.splitext(os.path.basename(args.input))[0]
-    print('done')
-
-    if X.ndim == 1:
-        # mono to stereo
-        X = np.asarray([X, X])
-
-    print('stft of wave source...', end=' ')
-    X_spec = spec_utils.wave_to_spectrogram(X, args.hop_length, args.n_fft)
-    print('done')
-
-    sp = Separator(model, device, args.batchsize, args.cropsize, args.postprocess)
-
-    if args.tta:
-        y_spec, v_spec = sp.separate_tta(X_spec)
-    else:
-        y_spec, v_spec = sp.separate(X_spec)
-
-    print('validating output directory...', end=' ')
-    output_dir = args.output_dir
-    if output_dir != "":  # modifies output_dir if theres an arg specified
-        output_dir = output_dir.rstrip('/') + '/'
-        os.makedirs(output_dir, exist_ok=True)
-    print('done')
-
-    print('inverse stft of instruments...', end=' ')
-    wave = spec_utils.spectrogram_to_wave(y_spec, hop_length=args.hop_length)
-    print('done')
-    sf.write('{}{}_Instruments.wav'.format(output_dir, basename), wave.T, sr)
-
-    print('inverse stft of vocals...', end=' ')
-    wave = spec_utils.spectrogram_to_wave(v_spec, hop_length=args.hop_length)
-    print('done')
-    sf.write('{}{}_Vocals.wav'.format(output_dir, basename), wave.T, sr)
-
-    if args.output_image:
-        image = spec_utils.spectrogram_to_image(y_spec)
-        utils.imwrite('{}{}_Instruments.jpg'.format(output_dir, basename), image)
-
-        image = spec_utils.spectrogram_to_image(v_spec)
-        utils.imwrite('{}{}_Vocals.jpg'.format(output_dir, basename), image)
+    run(
+        args.gpu, 
+        args.pretrained_model, 
+        args.input, 
+        args.sr, 
+        args.n_fft, 
+        args.hop_length, 
+        args.batchsize, 
+        args.cropsize, 
+        args.output_image,
+        args.postprocess,
+        args.tta,
+        args.output_dir,
+        # lambda percent: print(f"\n percent: {percent}")
+    )
 
 
 if __name__ == '__main__':

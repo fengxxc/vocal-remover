@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 
 import librosa
 import numpy as np
@@ -107,7 +108,7 @@ class Separator(object):
 
         return y_spec, v_spec
 
-def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filename='', sr=44100, n_fft=2048, hop_length=1024, batchsize=4, cropsize=256, output_image=False, postprocess=False, tta=False, output_dir="", stepCallback=None):
+def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filename='', sr=44100, n_fft=2048, hop_length=1024, batchsize=4, cropsize=256, output_image=False, postprocess=False, tta=False, output_dir="", stepCallback=None, output_name_fn=None, output_vocals=False):
     print('loading model...', end=' ')
     device = torch.device('cpu')
     model = nets.CascadedNet(n_fft, 32, 128)
@@ -124,7 +125,7 @@ def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filena
     print('loading wave source...', end=' ')
     X, sr = librosa.load(
         input, sr = sr, mono=False, dtype=np.float32, res_type='kaiser_fast')
-    if input_filename != '':
+    if input_filename is not None and input_filename != '':
         basename = os.path.splitext(input_filename)[0]
     else:
         basename = os.path.splitext(os.path.basename(input))[0]
@@ -155,12 +156,19 @@ def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filena
     print('inverse stft of instruments...', end=' ')
     wave = spec_utils.spectrogram_to_wave(y_spec, hop_length=hop_length)
     print('done')
-    sf.write('{}{}_Instruments.wav'.format(output_dir, basename), wave.T, sr)
+    y_filename = basename + '_Instruments'
+    if output_name_fn is not None:
+        y_filename = output_name_fn('instruments', basename)
+    sf.write('{}{}.wav'.format(output_dir, y_filename), wave.T, sr)
 
-    print('inverse stft of vocals...', end=' ')
-    wave = spec_utils.spectrogram_to_wave(v_spec, hop_length=hop_length)
-    print('done')
-    sf.write('{}{}_Vocals.wav'.format(output_dir, basename), wave.T, sr)
+    if output_vocals:
+        print('inverse stft of vocals...', end=' ')
+        wave = spec_utils.spectrogram_to_wave(v_spec, hop_length=hop_length)
+        print('done')
+        v_filename = basename + '_Vocals'
+        if output_name_fn is not None:
+            v_filename = output_name_fn('vocals', basename)
+        sf.write('{}{}.wav'.format(output_dir, v_filename), wave.T, sr)
 
     if output_image:
         image = spec_utils.spectrogram_to_image(y_spec)
@@ -184,6 +192,7 @@ def main():
     p.add_argument('--postprocess', '-p', action='store_true')
     p.add_argument('--tta', '-t', action='store_true')
     p.add_argument('--output_dir', '-o', type=str, default="")
+    p.add_argument('--output_vocals', '-ov', action='store_true')
     args = p.parse_args()
 
     run(
@@ -201,6 +210,8 @@ def main():
         args.tta,
         args.output_dir,
         # lambda percent: print(f"\n percent: {percent}")
+        output_name_fn=lambda name, basename: re.sub(r"\[original", f"[{name}", basename),
+        output_vocals=args.output_vocals,
     )
 
 

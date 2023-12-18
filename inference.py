@@ -107,7 +107,7 @@ class Separator(object):
 
         return y_spec, v_spec
 
-def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, sr=44100, n_fft=2048, hop_length=1024, batchsize=4, cropsize=256, output_image=False, postprocess=False, tta=False, output_dir="", stepCallback=None):
+def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filename='', sr=44100, n_fft=2048, hop_length=1024, batchsize=4, cropsize=256, output_image=False, postprocess=False, tta=False, output_dir="", stepCallback=None):
     print('loading model...', end=' ')
     device = torch.device('cpu')
     model = nets.CascadedNet(n_fft, 32, 128)
@@ -124,7 +124,10 @@ def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, sr=44100, n_
     print('loading wave source...', end=' ')
     X, sr = librosa.load(
         input, sr = sr, mono=False, dtype=np.float32, res_type='kaiser_fast')
-    basename = os.path.splitext(os.path.basename(input))[0]
+    if input_filename != '':
+        basename = os.path.splitext(input_filename)[0]
+    else:
+        basename = os.path.splitext(os.path.basename(input))[0]
     print('done')
 
     if X.ndim == 1:
@@ -171,6 +174,7 @@ def main():
     p.add_argument('--gpu', '-g', type=int, default=-1)
     p.add_argument('--pretrained_model', '-P', type=str, default='models/baseline.pth')
     p.add_argument('--input', '-i', required=True)
+    p.add_argument('--input_filename', '-if', required=False)
     p.add_argument('--sr', '-r', type=int, default=44100)
     p.add_argument('--n_fft', '-f', type=int, default=2048)
     p.add_argument('--hop_length', '-H', type=int, default=1024)
@@ -186,6 +190,7 @@ def main():
         args.gpu, 
         args.pretrained_model, 
         args.input, 
+        args.input_filename,
         args.sr, 
         args.n_fft, 
         args.hop_length, 

@@ -158,7 +158,7 @@ def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filena
     print('done')
     y_filename = basename + '_Instruments'
     if output_name_fn is not None:
-        y_filename = output_name_fn('instruments', basename)
+        y_filename = output_name_fn('instrument', basename)
     sf.write('{}{}.wav'.format(output_dir, y_filename), wave.T, sr)
 
     if output_vocals:
@@ -167,7 +167,7 @@ def run(gpu=-1, pretrained_model='models/baseline.pth', input=None, input_filena
         print('done')
         v_filename = basename + '_Vocals'
         if output_name_fn is not None:
-            v_filename = output_name_fn('vocals', basename)
+            v_filename = output_name_fn('vocal', basename)
         sf.write('{}{}.wav'.format(output_dir, v_filename), wave.T, sr)
 
     if output_image:
